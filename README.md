@@ -25,7 +25,7 @@ Linux apps for which dragging files from Explorer didn't work:
 - PcManFM (LXDE file manager)
 
 ## Usage
-Run `wsl_drag_relay.exe` after a local X server - either VcXsrv or Xming - was started, done. Or even simpler, put a .xlaunch file - like the provided file `auto.xlaunch` - into the same folder as wsl_drag_relay.exe (and the 7 .dlls), set "ClientMode" to "StartProgram" and add wsl_drag_relay.exe as "LocalProgram". Double-clicking the .xlaunch file will then automatically both start your X server (in "Multiple Windows" mode) and run wsl_drag_relay.exe, which will inject `wsl_drag_relay.dll` into the server's process and run in the background until the X server is shutdown.
+Run `wsl_drag_relay.exe` after a local X server - either VcXsrv or Xming - was started, done. Or even simpler, put a .xlaunch file - like the provided file [auto.xlaunch](dist/auto.xlaunch) - into the same folder as wsl_drag_relay.exe (and the 7 .dlls), set "ClientMode" to "StartProgram" and add wsl_drag_relay.exe as "LocalProgram". Double-clicking the .xlaunch file will then automatically both start your X server (in "Multiple Windows" mode) and run wsl_drag_relay.exe, which will inject `wsl_drag_relay.dll` into the server's process and run in the background until the X server is shutdown.
 
 ## Screenshot
 
