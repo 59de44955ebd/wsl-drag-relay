@@ -7,7 +7,7 @@ The Linux GUI app integration must be based on a 3rd party X server, either [VcX
 wsl-drag-relay.exe checks for a currently running local X server, and if it finds one, it injects wsl-drag-relay.dll into the server's process. This .dll then watches for new top level X windows (via RegisterWindowMessage). Whenever a new window is found, Windows drag support is activated (via DragAcceptFiles) and all Windows drop events based on local files are forwarded as X11 drop events, where "local" means that the dropped files must have pathes starting with a drive letter, UNC pathes/SMB shares etc. are not supported.
 
 ## Supported apps
-The WSL Linux distribution used for testing was a Debian 12 (Bookworm) with Xfce4 desktop, both in a WSL 1 and a WSL 2 environment, and both using either VcXsrv or Xming.
+The WSL Linux distribution used for testing was Debian 12 (Bookworm) with Xfce4 desktop, both in WSL 1 and WSL 2, and both using either VcXsrv or Xming.
 
 Linux apps for which dragging files from Explorer worked fine:
 - All tested text editors: Featherpad, Geany, Gedit, Kate, Mousepad, Notepad Next, SciTE, Sublime Text, Xed
