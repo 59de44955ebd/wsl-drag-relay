@@ -40,6 +40,8 @@ LRESULT CALLBACK DropFilesProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 			ds.cbData =	sizeof(DropData);
 			ds.lpData =	(void *)dd;
 			SendMessageW(hwnd_RELAY, WM_COPYDATA, (WPARAM)(HWND)0, (LPARAM)&ds);
+
+			free(dd);
 		}
 
 		DragFinish((HDROP)wparam);
