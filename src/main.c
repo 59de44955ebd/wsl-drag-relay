@@ -197,14 +197,17 @@ DWORD WINAPI MyThreadFunction( LPVOID lpParam )
 //######################################
 int main(void)
 {
-	// Try up to 5 sec. to find a X root window (either VcXsrv or Xming)
+	// Try up to 5 sec. to find a X root window (either VcXsrv, Cygwin/X or Xming)
 	HWND hwnd;
 	for (int i=0; i< 50; i++)
 	{
-		hwnd = FindWindowW(XWIN_ROOT_WINDOW_CLASS, NULL);
+		hwnd = FindWindowW(XWIN_ROOT_WINDOW_CLASS1, NULL);
 		if (hwnd)
 			break;
 		hwnd = FindWindowW(XWIN_ROOT_WINDOW_CLASS2, NULL);
+		if (hwnd)
+			break;
+		hwnd = FindWindowW(XWIN_ROOT_WINDOW_CLASS3, NULL);
 		if (hwnd)
 			break;
 		usleep(100 * 1000);

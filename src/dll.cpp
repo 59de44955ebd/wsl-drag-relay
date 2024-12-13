@@ -72,8 +72,9 @@ LRESULT CALLBACK NewWndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 			{
 				GetClassNameW(hwnd_new, class_name, RELAY_WINDOW_CLASS_LEN);
 				if (
-					wcscmp(class_name, XWIN_CLIENT_WINDOW_CLASS) == 0 ||
-					wcscmp(class_name, XWIN_CLIENT_WINDOW_CLASS2) == 0
+					wcscmp(class_name, XWIN_CLIENT_WINDOW_CLASS1) == 0 ||
+					wcscmp(class_name, XWIN_CLIENT_WINDOW_CLASS2) == 0 ||
+					wcscmp(class_name, XWIN_CLIENT_WINDOW_CLASS3) == 0
 				)
 				{
 					HANDLE h = GetPropW(hwnd_new, L"OLDPROC");
@@ -114,9 +115,11 @@ void DoThings()
 {
 	HWND hwnd;
 
-	hwnd = FindWindowW(XWIN_ROOT_WINDOW_CLASS, NULL);
+	hwnd = FindWindowW(XWIN_ROOT_WINDOW_CLASS1, NULL);
 	if (!hwnd)
 		hwnd = FindWindowW(XWIN_ROOT_WINDOW_CLASS2, NULL);
+	if (!hwnd)
+		hwnd = FindWindowW(XWIN_ROOT_WINDOW_CLASS3, NULL);
 
 	if (!hwnd)
 	{
@@ -130,6 +133,9 @@ void DoThings()
 	WNDPROC old_proc = (WNDPROC)SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)&NewWndproc);
 	SetPropW(hwnd, L"OLDPROC", (HANDLE)old_proc);
 
+#ifdef FORCE_DARK
+	isDark = TRUE;
+#else
     HKEY hkey;
     if (RegOpenKeyW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize" , &hkey) == ERROR_SUCCESS)
     {
@@ -139,6 +145,7 @@ void DoThings()
         	isDark = dwData == 0;
         RegCloseKey(hkey);
 	}
+#endif
 }
 
 //######################################
