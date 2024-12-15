@@ -11,5 +11,12 @@
 #define RELAY_WINDOW_CLASS_LEN 14
 #define RELAY_DLL L"wsl-drag-relay.dll"
 
+#define MAX_FILES_PER_DROP 10
+#define MAX_PATH 260
+// "file:///mnt/" + "\r\n" => 14
+#define MAX_LEN_URILIST MAX_FILES_PER_DROP * (MAX_PATH + 14) + 1
+
+#define MAX_LEN_TITLE 260
+
 // uncomment to always force dark window title bars
 //#define FORCE_DARK 1

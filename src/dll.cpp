@@ -10,6 +10,38 @@ static UINT WM_SHELLHOOKMESSAGE;
 static WCHAR class_name[RELAY_WINDOW_CLASS_LEN];
 static BOOL isDark = FALSE;
 
+BOOL isLnkFileW(WCHAR *str);
+BOOL resolveLnkW(LPWSTR lpszLinkFile, LPWSTR lpszPath);
+
+//######################################
+//
+//######################################
+int utf16ToUtf8 (const WCHAR *utf16, char *utf8)
+{
+	return WideCharToMultiByte(
+		CP_UTF8,
+		0,
+		utf16,     // source UTF-16 string
+		MAX_PATH,  // total length of source UTF-16 string, in WCHARs
+		utf8,	   // destination buffer
+		MAX_PATH,  // size of destination buffer
+		NULL,
+		NULL
+	);
+}
+
+//######################################
+//
+//######################################
+void replaceChar(char *str, char orig, char rep)
+{
+    char *ix = str;
+    while((ix = strchr(ix, orig)) != NULL)
+    {
+        *ix++ = rep;
+    }
+}
+
 //######################################
 //
 //######################################
@@ -22,29 +54,57 @@ LRESULT CALLBACK DropFilesProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 			return 0;
 
 		int cnt = DragQueryFileW((HDROP)wparam, 0xFFFFFFFF, NULL, 0);
+		if (cnt > MAX_FILES_PER_DROP)
+			cnt = MAX_FILES_PER_DROP;
 
-		POINT pt;
-		GetCursorPos(&pt);
-		HWND hwnd_target = WindowFromPoint(pt);
+		DropData * dd = (DropData*)malloc(sizeof(DropData));
+		GetCursorPos(&dd->pt);
+		dd->hwnd = WindowFromPoint(dd->pt);
+
+		WCHAR wwindow_title[MAX_LEN_TITLE];
+		GetWindowTextW(dd->hwnd, wwindow_title, MAX_LEN_TITLE);
+		utf16ToUtf8(wwindow_title, dd->window_title);
+
+		dd->urilist[0] = 0;
+
+		WCHAR wfilename[MAX_PATH];
+		char filename[MAX_PATH];
 
 		for (int i = 0; i < cnt; i++)
 		{
-			DropData * dd = (DropData*)malloc(sizeof(DropData));
-			GetWindowTextW(hwnd_target, dd->window_title, MAX_PATH);
-			DragQueryFileW((HDROP)wparam, i, dd->filename, MAX_PATH);
-			dd->hwnd = hwnd_target;
-			dd->pt = pt;
+			DragQueryFileW((HDROP)wparam, i, wfilename, MAX_PATH);
 
-			COPYDATASTRUCT ds;
-			ds.dwData =	0;
-			ds.cbData =	sizeof(DropData);
-			ds.lpData =	(void *)dd;
-			SendMessageW(hwnd_RELAY, WM_COPYDATA, (WPARAM)(HWND)0, (LPARAM)&ds);
+			if (isLnkFileW(wfilename))
+			{
+				WCHAR wresovled[MAX_PATH];
+				resolveLnkW(wfilename, wresovled);
+				wcscpy(wfilename, wresovled);
+			}
 
-			free(dd);
+			utf16ToUtf8(wfilename, filename);
+
+			strcat(dd->urilist, "file://");
+			strcat(dd->urilist, "/mnt/");
+			char drive[] = " ";
+			drive[0] = tolower(filename[0]);
+			strcat(dd->urilist, drive);
+			char * ptr = (char *)filename;
+			ptr += 2;
+			replaceChar(ptr, '\\', '/');
+			strcat(dd->urilist, ptr);
+			strcat(dd->urilist, "\r\n");
 		}
 
 		DragFinish((HDROP)wparam);
+
+		COPYDATASTRUCT ds;
+		ds.dwData =	0;
+		ds.cbData =	sizeof(DropData);
+		ds.lpData =	(void *)dd;
+		SendMessageW(hwnd_RELAY, WM_COPYDATA, (WPARAM)(HWND)0, (LPARAM)&ds);
+
+		free(dd);
+
 		return 0;
 	}
 
@@ -80,8 +140,6 @@ LRESULT CALLBACK NewWndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 					HANDLE h = GetPropW(hwnd_new, L"OLDPROC");
 					if (!h)
 					{
-						//OutputDebugStringW(L"[ wsl_drag_relay.dll ] New window found.");
-
 						// Make window title dark
 						if (isDark)
 						{
@@ -132,6 +190,9 @@ void DoThings()
 
 	WNDPROC old_proc = (WNDPROC)SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)&NewWndproc);
 	SetPropW(hwnd, L"OLDPROC", (HANDLE)old_proc);
+
+	// needed for .LNK file support
+	CoInitialize(NULL);
 
 #ifdef FORCE_DARK
 	isDark = TRUE;

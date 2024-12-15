@@ -35,11 +35,11 @@ Linux apps for which dragging files from Explorer didn't work:
 ## Compiling
 Requirements:
 - CygWin x86_64 with the following packages:
-    - mingw64-x86_64-gcc-core
-    - mingw64-x86_64-gcc-g++
-    - gcc-g++
+    - gcc-core (for .exe)
+    - mingw64-x86_64-gcc-core (for .dll)
     - make
     - libX11-devel
+    - libX11-xcb-devel
     - git
 
 In a CygWin shell run:

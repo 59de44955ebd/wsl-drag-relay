@@ -1,57 +1,14 @@
-#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/types.h>
-#include <unistd.h>
 #include <windows.h>
-#include <objbase.h>
 #include <wchar.h>
-#include <X11/Xlib.h>
 #include <unistd.h>
 
 #include "config.h"
 #include "drop.h"
 
-BOOL isLnkFileW(WCHAR *str);
-BOOL resolveLnkW(LPWSTR lpszLinkFile, LPWSTR lpszPath);
-void createXWindow();
-
-extern Display *disp;
-extern Window wind;
-extern Atom XMyDropEvent;
-extern char dropped_file[MAX_PATH];
-extern char window_title[MAX_PATH];
-
-static Atom WM_PROTOCOLS, WM_DELETE_WINDOW;
-
-//######################################
-//
-//######################################
-int utf16ToUtf8 (const WCHAR *utf16, char *utf8)
-{
-	return WideCharToMultiByte(
-		CP_UTF8,
-		0,
-		utf16,     // source UTF-16 string
-		MAX_PATH,  // total length of source UTF-16 string, in WCHARs
-		utf8,	   // destination buffer
-		MAX_PATH,  // size of destination buffer
-		NULL,
-		NULL
-	);
-}
-
-//######################################
-//
-//######################################
-void replaceChar(char *str, char orig, char rep)
-{
-    char *ix = str;
-    while((ix = strchr(ix, orig)) != NULL)
-    {
-        *ix++ = rep;
-    }
-}
+void create_drop_window();
+void send_drop_message(int x, int y, char * urilist, char * window_title);
 
 //######################################
 //
@@ -60,81 +17,20 @@ LRESULT CALLBACK MywWndproc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam)
 {
 	switch (msg)
 	{
-		case WM_CREATE:
-			return 0 ;
+	case WM_CREATE:
+		return 0 ;
 
-		case WM_DESTROY:
-			PostQuitMessage (0) ;
-			return 0 ;
+	case WM_DESTROY:
+		PostQuitMessage (0) ;
+		return 0 ;
 
-		case WM_COPYDATA:
-			{
-				COPYDATASTRUCT * cds = (COPYDATASTRUCT*)lparam;
-	            DropData * dd = (DropData*)cds->lpData;
-
-				//printf("DROP: %ls %d\n", dd->filename, isLnkFileW(dd->filename));
-				if (isLnkFileW(dd->filename))
-				{
-					WCHAR filename[MAX_PATH];
-					resolveLnkW(dd->filename, filename);
-					wcscpy(dd->filename, filename);
-				}
-
-				//######################################
-				// Convert to WSL path (quick & dirty)
-				//######################################
-				char filename[MAX_PATH];
-				utf16ToUtf8(dd->filename, filename);
-
-				strcpy(dropped_file, "/mnt/");
-				char drive[] = " ";
-				drive[0] = tolower(filename[0]);
-				strcat(dropped_file, drive);
-				char * ptr = (char *)filename;
-				ptr += 2;
-				replaceChar(ptr, '\\', '/');
-				strcat(dropped_file, ptr);
-
-				utf16ToUtf8(dd->window_title, window_title);
-
-				XEvent ev;
-				//memset(&ev, 0, sizeof(XEvent));
-				ev.xclient.type = ClientMessage;
-				ev.xclient.window = wind;
-				ev.xclient.message_type = XMyDropEvent;
-				ev.xclient.format = 32;
-//				ev.xclient.data.l[0] = CurrentTime;
-				ev.xclient.data.l[0] = dd->pt.x;
-				ev.xclient.data.l[1] = dd->pt.y;
-				XSendEvent(
-					disp,
-					wind,
-					0,
-					0,
-					&ev
-				);
-				XFlush(disp);
-            }
-			return 0;
-
-		case WM_CLOSE:
-			{
-				XEvent ev;
-				ev.xclient.type = ClientMessage;
-				ev.xclient.window = wind;
-				ev.xclient.message_type = XInternAtom(disp, "WM_PROTOCOLS", true);
-				ev.xclient.format = 32;
-				ev.xclient.data.l[0] = XInternAtom(disp, "WM_DELETE_WINDOW", false);
-				ev.xclient.data.l[1] = CurrentTime;
-				XSendEvent(
-					disp,
-					wind,
-					0,
-					NoEventMask,
-					&ev
-				);
-				XFlush(disp);
-			}
+	case WM_COPYDATA:
+		{
+			COPYDATASTRUCT * cds = (COPYDATASTRUCT*)lparam;
+            DropData * dd = (DropData*)cds->lpData;
+			send_drop_message(dd->pt.x, dd->pt.y, dd->urilist, dd->window_title);
+        }
+		return 0;
 	}
 
 	return DefWindowProcW(hwnd, msg, wparam, lparam);
@@ -153,7 +49,7 @@ DWORD WINAPI MyThreadFunction( LPVOID lpParam )
     wcex.lpfnWndProc    = MywWndproc;
     wcex.cbClsExtra     = 0;
     wcex.cbWndExtra     = 0;
-    wcex.hInstance      = 0; //hInstance;
+    wcex.hInstance      = 0;
     wcex.hIcon          = 0;
     wcex.hCursor        = LoadCursor(NULL, IDC_ARROW);
     wcex.hbrBackground  = (HBRUSH)(COLOR_WINDOW+1);
@@ -173,15 +69,11 @@ DWORD WINAPI MyThreadFunction( LPVOID lpParam )
         WS_OVERLAPPEDWINDOW,
         0, 0,
         300, 300,
-        NULL,  // hwndParent
         NULL,
-        NULL, //hInstance,
+        NULL,
+        NULL,
         NULL
     );
-
-	//ShowWindow(hwnd, SW_SHOW);
-
-	CoInitialize(NULL);
 
 	while (GetMessage (&msg, NULL, 0, 0))
 	{
@@ -199,7 +91,7 @@ int main(void)
 {
 	// Try up to 5 sec. to find a X root window (either VcXsrv, Cygwin/X or Xming)
 	HWND hwnd;
-	for (int i=0; i< 50; i++)
+	for (int i=0; i<50; i++)
 	{
 		hwnd = FindWindowW(XWIN_ROOT_WINDOW_CLASS1, NULL);
 		if (hwnd)
@@ -267,5 +159,13 @@ int main(void)
         0					// returns the thread identifier
 	);
 
-	createXWindow();
+	create_drop_window();
+
+	// Unhooking
+//	BOOL unhook = UnhookWindowsHookEx(handle);
+//	if (unhook == FALSE)
+//	{
+//		printf("[ FAILED ] Could not remove the hook.\n");
+//		return EXIT_FAILURE;
+//	}
 }

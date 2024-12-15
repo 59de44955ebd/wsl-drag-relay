@@ -3,16 +3,17 @@
 #include <shlguid.h>
 #include <wchar.h>
 
-extern "C"
+//extern "C"
 BOOL isLnkFileW(WCHAR *str)
 {
 	str = wcsrchr(str, L'.');
 	if (str != NULL)
-		return wcscasecmp(str, L".lnk") == 0;
+		return wcscmp(str, L".LNK") == 0 || wcscmp(str, L".lnk") == 0;
+//		return wcslen(str) == 4 && towlower(str[1]) == L'l';
 	return FALSE;
 }
 
-extern "C"
+//extern "C"
 BOOL resolveLnkW(LPWSTR lpszLinkFile, LPWSTR lpszPath)
 {
     HRESULT hr;

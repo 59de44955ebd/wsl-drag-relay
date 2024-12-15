@@ -1,385 +1,406 @@
-#include <errno.h>
-#include <stdarg.h>
 #include <stdbool.h>
-#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
-#include <unistd.h>
-#include <X11/Xlib.h>
+#include <limits.h>
 
-//#include <locale.h>
+#include <xcb/xcb.h>
+#include <xcb/xcb_aux.h>
+
+#include "config.h"
 
 #define XDND_PROTOCOL_VERSION 5
-#define MAX_PATH 260
 
-void die(const char * msg)
-{
-	printf("[ Error ] %s\n", msg);
-	exit(EXIT_FAILURE);
-}
-
-// State structure
-typedef struct {
-	bool xdndExchangeStarted;
-	Time xdndLastPositionTimestamp;
-	int p_rootX;
-	int p_rootY;
-	Window otherWindow;
-} XDNDState;
-
-// shared
-Display *disp;
-Window wind;
-Atom XMyDropEvent;
-char dropped_file[MAX_PATH];
-char window_title[MAX_PATH];
+static xcb_atom_t atmDndAware,
+	atmDndEnter,
+	atmDndPosition,
+	atmDndActionCopy,
+	atmDndDrop,
+	atmDndSelection,
+	atmUriListType,
+	atmDropEvent;
 
 // private
-static Atom XdndAware, XdndEnter, XdndPosition, XdndActionCopy, XdndLeave, XdndDrop,
-	XdndSelection, WM_PROTOCOLS, WM_DELETE_WINDOW, typesWeAccept[6];
+static char window_title[MAX_LEN_TITLE];
+static char urilist_local[MAX_LEN_URILIST];
+static int screen_num;
+static xcb_connection_t * conn;
+static xcb_window_t drop_window;
 
-// XDND global state machine
-static XDNDState xdndState;
-static XEvent event;
+void send_drop_message(int x, int y, char * urilist, char * win_title)
+{
+	strcpy(urilist_local, urilist);
+	strcpy(window_title, win_title);
+
+    xcb_client_message_event_t e;
+    memset(&e, 0, sizeof(e));
+    e.response_type = XCB_CLIENT_MESSAGE;
+    e.window = drop_window;
+    e.type = atmDropEvent;
+    e.format = 32;
+    e.data.data32[0] = x;
+    e.data.data32[1] = y;
+    xcb_send_event(conn, 0, drop_window, XCB_EVENT_MASK_NO_EVENT, (const char *)&e);
+	xcb_flush(conn);
+}
+
+static xcb_atom_t intern_atom(xcb_connection_t *conn, const char *atomName)
+{
+	xcb_intern_atom_reply_t *atom_reply;
+	xcb_intern_atom_cookie_t atom_cookie;
+	xcb_atom_t atom = XCB_ATOM_NONE;
+
+	atom_cookie = xcb_intern_atom(conn, 0, strlen(atomName), atomName);
+	atom_reply = xcb_intern_atom_reply(conn, atom_cookie, NULL);
+	if (atom_reply)
+	{
+		atom = atom_reply->atom;
+		free(atom_reply);
+	}
+	return atom;
+}
 
 // This checks if the supplied window has the XdndAware property
-static int hasCorrectXdndAwareProperty(Display *disp, Window wind)
+static uint32_t hasCorrectXdndAwareProperty(
+	xcb_connection_t * conn,
+	xcb_window_t win,
+	xcb_atom_t atmDndAware
+)
 {
-	// Try to get property
-	int retVal = 0;
-	Atom actualType = None;
-	int actualFormat;
-	unsigned long numOfItems, bytesAfterReturn;
-	unsigned char *data = NULL;
-	if (XGetWindowProperty(disp, wind, XdndAware, 0, 1024, False, AnyPropertyType,
-		&actualType, &actualFormat, &numOfItems, &bytesAfterReturn, &data) == Success)
-		{
-		if (actualType != None)
-		{
-			// Assume architecture is little endian and just read first byte for XDND protocol version
-			if (data[0] <= XDND_PROTOCOL_VERSION)
-				retVal = data[0];
-			XFree(data);
-		}
-	}
-
-	return retVal;
+	uint32_t protocol_version = 0;
+    xcb_get_property_cookie_t cookie;
+    xcb_get_property_reply_t *reply;
+    cookie = xcb_get_property(
+    	conn,
+    	false,
+    	win,
+		atmDndAware,
+		XCB_GET_PROPERTY_TYPE_ANY,
+		0,
+		INT_MAX
+	);
+    reply = xcb_get_property_reply(conn, cookie, NULL);
+    if (reply && (reply->type != XCB_NONE))
+    {
+        protocol_version = *((uint32_t *)xcb_get_property_value(reply));
+        free(reply);
+    }
+    return protocol_version;
 }
 
 // This sends the XdndEnter message which initiates the XDND protocol exchange
-static void sendXdndEnter(Display *disp, int xdndVersion, Window source, Window target)
+static void sendXdndEnter(
+	xcb_connection_t * conn,
+	int xdndVersion,
+	xcb_window_t source,
+	xcb_window_t target,
+	xcb_atom_t atmDndEnter
+//	xcb_atom_t atmType
+)
 {
-	// Only send if we are not already in an exchange
-	if (!xdndState.xdndExchangeStarted)
-	{
-		// Declare message struct and populate its values
-		XEvent message;
-		memset(&message, 0, sizeof(message));
-		message.xclient.type = ClientMessage;
-		message.xclient.display = disp;
-		message.xclient.window = target;
-		message.xclient.message_type = XdndEnter;
-		message.xclient.format = 32;
-		message.xclient.data.l[0] = source;
-		message.xclient.data.l[1] = xdndVersion << 24;
-		message.xclient.data.l[2] = typesWeAccept[0];
-		message.xclient.data.l[3] = None;
-		message.xclient.data.l[4] = None;
-
-		// Send it to target window
-		if (XSendEvent(disp, target, False, 0, &message) == 0)
-			die("XSendEvent");
-	}
+    xcb_client_message_event_t e;
+    memset(&e, 0, sizeof(e));
+    e.response_type = XCB_CLIENT_MESSAGE;
+    e.window = target;
+    e.type = atmDndEnter;
+    e.format = 32;
+    e.data.data32[0] = source;
+    e.data.data32[1] = xdndVersion << 24;
+	e.data.data32[2] = atmUriListType;
+    xcb_send_event(conn, false, target, XCB_EVENT_MASK_NO_EVENT, (const char *)&e);
 }
 
-// This sends the XdndPosition messages, which update the target on the state of the cursor
-// and selected action
-static void sendXdndPosition(Display *disp, Window source, Window target, int time, int p_rootX, int p_rootY)
+static void sendXdndPosition(
+	xcb_connection_t * conn,
+	xcb_window_t source,
+	xcb_window_t target,
+	int time,
+	int p_rootX,
+	int p_rootY,
+	xcb_atom_t atmDndPosition,
+	xcb_atom_t atmDndActionCopy
+)
 {
-	if (xdndState.xdndExchangeStarted)
-	{
-		// Declare message struct and populate its values
-		XEvent message;
-		memset(&message, 0, sizeof(message));
-		message.xclient.type = ClientMessage;
-		message.xclient.display = disp;
-		message.xclient.window = target;
-		message.xclient.message_type = XdndPosition;
-		message.xclient.format = 32;
-		message.xclient.data.l[0] = source;
-		//message.xclient.data.l[1] reserved
-		message.xclient.data.l[2] = p_rootX << 16 | p_rootY;
-		message.xclient.data.l[3] = time;
-		message.xclient.data.l[4] = XdndActionCopy;
-
-		// Send it to target window
-		if (XSendEvent(disp, target, False, 0, &message) == 0)
-			die("XSendEvent");
-	}
-}
-
-// This is sent by the source when the exchange is abandoned
-static void sendXdndLeave(Display *disp, Window source, Window target)
-{
-	if (xdndState.xdndExchangeStarted)
-	{
-		// Declare message struct and populate its values
-		XEvent message;
-		memset(&message, 0, sizeof(message));
-		message.xclient.type = ClientMessage;
-		message.xclient.display = disp;
-		message.xclient.window = target;
-		message.xclient.message_type = XdndLeave;
-		message.xclient.format = 32;
-		message.xclient.data.l[0] = source;
-		// Rest of array members reserved so not set
-
-		// Send it to target window
-		if (XSendEvent(disp, target, False, 0, &message) == 0)
-			die("XSendEvent");
-	}
+    xcb_client_message_event_t e;
+    memset(&e, 0, sizeof(e));
+    e.response_type = XCB_CLIENT_MESSAGE;
+    e.window = target;
+    e.type = atmDndPosition;
+    e.format = 32;
+    e.data.data32[0] = source;
+//    e.data.data32[1] reserved
+	e.data.data32[2] = p_rootX << 16 | p_rootY;
+	e.data.data32[3] = time;
+	e.data.data32[4] = atmDndActionCopy;
+    xcb_send_event(conn, false, target, XCB_EVENT_MASK_NO_EVENT, (const char *)&e);
 }
 
 // This is sent by the source to the target to say it can call XConvertSelection
-static void sendXdndDrop(Display *disp, Window source, Window target)
+static void sendXdndDrop(
+	xcb_connection_t * conn,
+	xcb_window_t source,
+	xcb_window_t target,
+	xcb_atom_t atmDndDrop,
+	time_t xdndLastPositionTimestamp
+)
 {
-	if (xdndState.xdndExchangeStarted)
-	{
-		// Declare message struct and populate its values
-		XEvent message;
-		memset(&message, 0, sizeof(message));
-		message.xclient.type = ClientMessage;
-		message.xclient.display = disp;
-		message.xclient.window = target;
-		message.xclient.message_type = XdndDrop;
-		message.xclient.format = 32;
-		message.xclient.data.l[0] = source;
-		//message.xclient.data.l[1] reserved
-		message.xclient.data.l[2] = xdndState.xdndLastPositionTimestamp;
-
-		// Send it to target window
-		if (XSendEvent(disp, target, False, 0, &message) == 0)
-			die("XSendEvent");
-	}
+    xcb_client_message_event_t e;
+    memset(&e, 0, sizeof(e));
+    e.response_type = XCB_CLIENT_MESSAGE;
+    e.window = target;
+    e.type = atmDndDrop;
+    e.format = 32;
+    e.data.data32[0] = source;
+//    e.data.data32[1] reserved
+	e.data.data32[2] = xdndLastPositionTimestamp;
+    xcb_send_event(conn, false, target, XCB_EVENT_MASK_NO_EVENT, (const char *)&e);
 }
 
 // This is sent by the source to the target to say the data is ready
-static void sendSelectionNotify(Display *disp, XSelectionRequestEvent *selectionRequest, const char *pathStr)
+static void sendSelectionNotify(
+	xcb_connection_t * conn,
+	xcb_selection_request_event_t *selection_request
+)
 {
-	if (xdndState.xdndExchangeStarted)
+	xcb_change_property_checked(
+		conn,
+		XCB_PROP_MODE_REPLACE,
+		selection_request->requestor,
+		selection_request->property,
+		atmUriListType, //typesWeAccept[0],
+		8,
+		strlen(urilist_local),
+		(unsigned char *) urilist_local
+	);
+
+	// Setup selection notify xevent
+    xcb_selection_notify_event_t eventSelection;
+    eventSelection.response_type = XCB_SELECTION_NOTIFY;
+    eventSelection.requestor = selection_request->requestor;
+    eventSelection.selection = selection_request->selection;
+    eventSelection.target = selection_request->target;
+    eventSelection.property = selection_request->property;
+    eventSelection.time = selection_request->time;
+
+    xcb_send_event(
+    	conn,
+    	false,
+    	eventSelection.requestor,
+    	XCB_EVENT_MASK_NO_EVENT,
+    	(const char *)&eventSelection
+    );
+
+    xcb_flush(conn);
+}
+
+static char *get_xwindow_name(
+	xcb_connection_t * conn,
+	xcb_window_t win
+)
+{
+	xcb_atom_t prop = intern_atom(conn, "_NET_WM_NAME"), type;
+  	xcb_get_property_cookie_t cookie = xcb_get_property(
+  		conn,
+		0,
+		win,
+		prop,
+		XCB_GET_PROPERTY_TYPE_ANY,
+		0,
+		INT_MAX
+	);
+
+  	xcb_get_property_reply_t *reply = xcb_get_property_reply(conn, cookie, NULL);
+	if (!reply)
 	{
-		// Allocate buffer (two bytes at end for CR/NL and another for null byte)
-		size_t sizeOfPropertyData = strlen("file://") + strlen(pathStr) + 3;
-		char *propertyData = malloc(sizeOfPropertyData);
-		if (!propertyData)
-			die("malloc");
-
-		// Copy data to buffer
-		strcpy(propertyData, "file://");
-		strcat(propertyData, pathStr);
-		propertyData[sizeOfPropertyData-3] = 0xD;
-		propertyData[sizeOfPropertyData-2] = 0xA;
-		propertyData[sizeOfPropertyData-1] = '\0';
-
-		// Set property on target window - do not copy end null byte
-		XChangeProperty(disp, selectionRequest->requestor, selectionRequest->property,
-			typesWeAccept[0], 8, PropModeReplace, (unsigned char *)propertyData, sizeOfPropertyData-1);
-
-		// Free property buffer
-		free(propertyData);
-
-		// Declare message struct and populate its values
-		XEvent message;
-		memset(&message, 0, sizeof(message));
-		message.xselection.type = SelectionNotify;
-		message.xselection.display = disp;
-		message.xselection.requestor = selectionRequest->requestor;
-		message.xselection.selection = selectionRequest->selection;
-		message.xselection.target = selectionRequest->target;
-		message.xselection.property = selectionRequest->property;
-		message.xselection.time = selectionRequest->time;
-
-		// Send it to target window
-		if (XSendEvent(disp, selectionRequest->requestor, False, 0, &message) == 0)
-			die("XSendEvent");
-
-		xdndState.xdndExchangeStarted = false;
-	}
-}
-
-char *getWindowName(Display *disp, Window win)
-{
-    Atom prop = XInternAtom(disp,"_NET_WM_NAME", False), type;
-    int form;
-    unsigned long remain, len;
-    unsigned char * name;
-    if (XGetWindowProperty(disp, win, prop, 0, 1024, False, AnyPropertyType,
-                &type, &form, &len, &remain, &name) != Success)
-    {
-    	printf("[ FAILED ] getWindowName failed.\n");
+    	printf("[ FAILED ] get_xwindow_name failed.\n");
         return NULL;
-    }
-    return (char*)name;
+	}
+    return (char*)xcb_get_property_value(reply);
 }
 
-bool findWindow( Display *display, Window parent_window, char * window_title, Window * target_window )
+static bool find_xwindow(
+	xcb_connection_t * conn,
+	xcb_window_t parent_window,
+	char * window_title,
+	xcb_window_t * target_window
+)
 {
-    Window root_return;
-    Window parent_return;
-    Window *children_list = NULL;
-    unsigned int list_length = 0;
     char *name;
-
-    // query the window list recursively, until each window reports no sub-windows
-    if ( 0 != XQueryTree( display, parent_window, &root_return, &parent_return, &children_list, &list_length ) )
-    {
-        if ( list_length > 0 && children_list != NULL )
-        {
-            for ( int i=0; i<list_length; i++)
-            {
-            	name = getWindowName(display, children_list[i]);
-            	//printf("Window: %lu (%s)\n", children_list[i], name);
-            	if (name && strcmp(name, window_title) == 0)
-            	{
-            		*target_window = children_list[i];
-            		free(name);
-            		XFree( children_list );
-            		return true;
-            	}
-            	free(name);
-            }
-            XFree(children_list); // cleanup
-        }
-    }
+	xcb_query_tree_reply_t *reply;
+	xcb_query_tree_cookie_t cookie = xcb_query_tree(conn, parent_window);
+	if ((reply = xcb_query_tree_reply(conn, cookie, NULL)))
+	{
+		xcb_window_t *children = xcb_query_tree_children(reply);
+		for (int i = 0; i < xcb_query_tree_children_length(reply); i++)
+		{
+        	name = get_xwindow_name(conn, children[i]);
+        	if (name && strcmp(name, window_title) == 0)
+        	{
+        		*target_window = children[i];
+        		free(name);
+        		free(reply);
+        		return true;
+        	}
+        	free(name);
+		}
+		free(reply);
+	}
     return false;
 }
 
-void do_drop(long x, long y)
+static xcb_screen_t *screen_of_display(
+	xcb_connection_t * conn,
+	int screen
+)
 {
-    Window root_window = XRootWindow( disp, 0 );
+	xcb_screen_iterator_t iter;
+	iter = xcb_setup_roots_iterator(xcb_get_setup (conn));
+	for (; iter.rem; --screen, xcb_screen_next (&iter))
+	  	if (screen == 0)
+	    	return iter.data;
+	return NULL;
+}
 
-    Window targetWindow;
-    bool ok = findWindow( disp, root_window, window_title, &targetWindow );
+static void do_drop(long x, long y)
+{
+    // Get root screen
+	xcb_screen_t * root_screen = screen_of_display(conn, screen_num);
+    if (!root_screen)
+    {
+    	printf("[ FAILED ] Could not find root_screen.\n");
+    	return;
+	}
+
+    // Find target_window
+	xcb_window_t target_window;
+    bool ok = find_xwindow(conn, root_screen->root, window_title, &target_window);
     if (!ok)
     {
-    	printf( "Window not found: %s\n", window_title);
+    	printf("[ FAILED ] Could not find target_window: %s\n", window_title);
     	return;
     }
 
-	// Check targetWindow supports XDND
-	int supportsXdnd = hasCorrectXdndAwareProperty(disp, targetWindow);
-	if (supportsXdnd == 0)
+	// Check target_window supports XDND
+	uint32_t xdndVersion = hasCorrectXdndAwareProperty(
+		conn,
+		target_window,
+		atmDndAware
+	);
+
+	if (xdndVersion == 0)
 		return;
 
 	// Claim ownership of Xdnd selection
-	XSetSelectionOwner(disp, XdndSelection, wind, event.xmotion.time);
+	xcb_set_selection_owner(
+		conn,
+		drop_window,
+		atmDndSelection,
+		XCB_CURRENT_TIME
+	);
 
 	// Send XdndEnter message
-	sendXdndEnter(disp, supportsXdnd, wind, targetWindow);
-	xdndState.xdndExchangeStarted = true;
-	xdndState.otherWindow = targetWindow;
+	sendXdndEnter(
+		conn,
+		xdndVersion,
+		drop_window,
+		target_window,
+		atmDndEnter
+		//typesWeAccept[0]
+	);
 
 	// Send XdndPosition message
-	sendXdndPosition(disp, wind, targetWindow, event.xmotion.time, x, y);
+	sendXdndPosition(
+		conn,
+		drop_window,
+		target_window,
+		XCB_CURRENT_TIME,
+		x, y,
+		atmDndPosition,
+		atmDndActionCopy
+	);
 
 	// Send XdndDrop
-	sendXdndDrop(disp, wind, targetWindow);
+	sendXdndDrop(
+		conn,
+		drop_window,
+		target_window,
+		atmDndDrop,
+		XCB_CURRENT_TIME //Time xdndLastPositionTimestamp
+	);
+
+	xcb_flush(conn);
 }
 
-// Main logic is here
-void createXWindow()
+void create_drop_window()
 {
-	bool continueEventLoop = true;
+   	xcb_screen_t * screen;
+    xcb_generic_event_t * event;
+    int done = 0;
 
-	disp = XOpenDisplay(NULL);
-	if (disp == NULL)
-		die("XOpenDisplay");
-
-	XMyDropEvent = XInternAtom(disp, "MY_DROP_EVENT", False);
-
-	// Define atoms
-	XdndAware = XInternAtom(disp, "XdndAware", False);
-	XdndEnter = XInternAtom(disp, "XdndEnter", False);
-	XdndPosition = XInternAtom(disp, "XdndPosition", False);
-	XdndActionCopy = XInternAtom(disp, "XdndActionCopy", False);
-	XdndLeave = XInternAtom(disp, "XdndLeave", False);
-	XdndDrop = XInternAtom(disp, "XdndDrop", False);
-	XdndSelection = XInternAtom(disp, "XdndSelection", False);
-	WM_PROTOCOLS = XInternAtom(disp, "WM_PROTOCOLS", False);
-	WM_DELETE_WINDOW = XInternAtom(disp, "WM_DELETE_WINDOW", False);
-
-	// Define type atoms we will accept for file drop
-	typesWeAccept[0] = XInternAtom(disp, "text/uri-list", False);
-	typesWeAccept[1] = XInternAtom(disp, "UTF8_STRING", False);
-	typesWeAccept[2] = XInternAtom(disp, "TEXT", False);
-	typesWeAccept[3] = XInternAtom(disp, "STRING", False);
-	typesWeAccept[4] = XInternAtom(disp, "text/plain;charset=utf-8", False);
-	typesWeAccept[5] = XInternAtom(disp, "text/plain", False);
-
-	// Get screen dimensions
-	int screen = DefaultScreen(disp);
-
-	// Create window
-	wind = XCreateSimpleWindow(disp, RootWindow(disp, screen), 0, 0, 200, 200, 1, 0, 0);
-	if (wind == 0)
-		die("XCreateSimpleWindow");
-
-	// Set window title
-//	XStoreName(disp, wind, "XProxy");
-
-	// Set events we are interested in
-	if (XSelectInput(disp, wind, PointerMotionMask | ExposureMask) == 0)
-		die("XSelectInput");
-
-	// Set WM_PROTOCOLS to add WM_DELETE_WINDOW atom so we can end app gracefully
-	XSetWMProtocols(disp, wind, &WM_DELETE_WINDOW, 1);
-
-	// Begin listening for events
-	while (continueEventLoop)
+	if ((conn = xcb_connect(NULL, &screen_num)) == NULL)
 	{
-		XNextEvent(disp, &event);
+     	printf("[ FAILED ] Could not open display.\n");
+     	exit(1);
+   	}
 
-		switch (event.type)
+	// Define DND atoms
+	atmDndAware = intern_atom(conn, "XdndAware");
+	atmDndEnter = intern_atom(conn, "XdndEnter");
+	atmDndPosition = intern_atom(conn, "XdndPosition");
+	atmDndActionCopy = intern_atom(conn, "XdndActionCopy");
+	atmDndDrop = intern_atom(conn, "XdndDrop");
+	atmDndSelection = intern_atom(conn, "XdndSelection");
+	atmUriListType = intern_atom(conn, "text/uri-list");
+	atmDropEvent = intern_atom(conn, "MY_DROP_EVENT");
+
+	// Get the first screen
+	screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
+
+	drop_window = xcb_generate_id(conn);
+	xcb_create_window(
+		conn,
+		screen->root_depth,
+		drop_window,
+		screen->root,
+		0, 0, 100, 100,
+		0, // border_width
+		XCB_WINDOW_CLASS_INPUT_OUTPUT,
+		screen->root_visual,
+		0,
+		NULL
+    );
+
+	// uncomment to show hidden drop_window
+	//xcb_map_window(conn, drop_window);
+
+	xcb_flush(conn);
+
+	// event loop
+	while (!done && (event = xcb_wait_for_event(conn)))
+	{
+		switch (event->response_type & ~0x80)
 		{
-
-		// We are being asked for X selection data by the target
-		case SelectionRequest:
-			if (xdndState.xdndExchangeStarted) {
-				//printf(">>> SelectionRequest\n");
-
-				// Add data to the target window
-				sendSelectionNotify(disp, &event.xselectionrequest, dropped_file);
-			}
-			break;
-
-		// This is where we receive messages from the other window
-		case ClientMessage:
-			//printf("ClientMessage received %s message\n", getEventType(&event));
-
-			if (event.xclient.message_type == XMyDropEvent)
+		case XCB_CLIENT_MESSAGE:
+			xcb_client_message_event_t *client_msg = (xcb_client_message_event_t *)event;
+			if (client_msg->type == atmDropEvent)
 			{
-				do_drop(event.xclient.data.l[0], event.xclient.data.l[1]);
+				do_drop(client_msg->data.data32[0], client_msg->data.data32[1]);
 				break;
 			}
-
-			// Check if we are being closed
-			if (event.xclient.message_type == WM_PROTOCOLS) {
-				if (event.xclient.data.l[0] == WM_DELETE_WINDOW) {
-					// End event loop
-					continueEventLoop = false;
-					break;
-				}
-			}
-
 			break;
+
+		// We are being asked for X selection data by the target
+		case XCB_SELECTION_REQUEST:
+			// Add data to the target window
+			xcb_selection_request_event_t * selection_request =  (xcb_selection_request_event_t *)event;
+			sendSelectionNotify(conn, selection_request);
+			break;
+
 		}
+		free(event);
 	}
 
 	// Destroy window and close connection
-	XDestroyWindow(disp, wind);
-	XCloseDisplay(disp);
-
-	exit(0);
+	xcb_destroy_window(conn, drop_window);
+	xcb_disconnect(conn);
 }

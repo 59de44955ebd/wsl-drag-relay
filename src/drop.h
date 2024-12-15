@@ -1,7 +1,6 @@
-// State machine structure
 typedef struct {
-	WCHAR window_title[MAX_PATH];
-	WCHAR filename[MAX_PATH];
-	HWND hwnd;
+	char window_title[MAX_LEN_TITLE];
+	char urilist[MAX_LEN_URILIST];
 	POINT pt;
+	HWND hwnd;
 } DropData;
