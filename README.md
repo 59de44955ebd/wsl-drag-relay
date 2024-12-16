@@ -4,7 +4,7 @@ wsl-drag-relay is a simple small utility that adds a missing feature to WSL in W
 
 The Linux GUI app integration must be based on a 3rd party X server, either [VcXsrv](https://sourceforge.net/projects/vcxsrv/), [Cygwin/X](https://x.cygwin.com/) or [Xming](http://www.straightrunning.com/XmingNotes/). So while both WSL 1 and 2 are supported, WSLg currently is not. You have to deactivate WSLg (WSL Settings -> Optional Features) and instead install/use VcXsrv, Cygwin/X (with parameter -listen tcp) or Xming.
 
-wsl-drag-relay.exe checks for a currently running local X server, and if it finds one, it injects wsl-drag-relay.dll into the server's process. This .dll then watches for new top level X windows (via RegisterWindowMessage). Whenever a new window is found, Windows drag support is activated for this window (via DragAcceptFiles) and all Windows drop events based on local files are forwarded as X11 drop events to the Linux app, where "local" means that the dropped files must have paths starting with a drive letter, UNC paths/SMB shares etc. are not supported.
+wsl-drag-relay.exe checks for a currently running local X server, and if it finds one, it injects wsl-drag-relay.dll into the server's process. This .dll then watches for new top level X windows (via RegisterWindowMessage). Whenever a new window is found, Windows drag support is activated for this window (via DragAcceptFiles) and all Windows drop events based on local files are forwarded as X11 drop events to the Linux app, where "local" means that the dropped files must have paths starting either with a drive letter or with "\\\\wsl.localhost\\", other UNC paths/SMB shares etc. are not supported.
 
 ## Usage
 Run `wsl-drag-relay.exe` after a local X server - VcXsrv, Cygwin/X or Xming - was started, done. Or even simpler, put a .xlaunch file - like the provided file [auto.xlaunch](dist/auto.xlaunch) - into the same folder as wsl_drag_relay.exe (and the 7 .dlls), set "ClientMode" to "StartProgram" and add wsl_drag_relay.exe as "LocalProgram". Double-clicking the .xlaunch file will then automatically both start your X server (in "Multiple Windows" mode) and wsl-drag-relay.exe, which will inject `wsl-drag-relay.dll` into the server's process and run in the background until the X server is shutdown.
@@ -33,18 +33,24 @@ Linux apps for which dragging files from Explorer didn't work:
 - PcManFM (LXDE file manager)
 
 ## Compiling
-Requirements:
-- CygWin x86_64 with the following packages:
-    - gcc-core (for .exe)
-    - mingw64-x86_64-gcc-core (for .dll)
+
+### Requirements:
+- Git (obviously)
+- Visual Studio 2017 or later (for building the .dll)
+- CygWin x86_64 with the following packages (for building the .exe):
+    - gcc-core
     - make
     - libX11-devel
     - libX11-xcb-devel
-    - git
 
-In a CygWin shell run:
+### Build .exe
+In a CygWin shell cd to cloned directory and run:
 ```
-$ git clone https://github.com/59de44955ebd/wsl-drag-relay.git
-$ cd wsl-drag-relay
 $ make
+```
+
+### Build .dll
+Either use the Visual Studio IDE to build the Release x64 target, or run this in a Visual Studio x64 Native Tools Command Prompt:
+```
+$ MSBuild wsl-drag-relay.sln /property:Configuration=Release
 ```

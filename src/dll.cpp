@@ -82,17 +82,25 @@ LRESULT CALLBACK DropFilesProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam
 			}
 
 			utf16ToUtf8(wfilename, filename);
-
+			replaceChar(filename, '\\', '/');
 			strcat(dd->urilist, "file://");
-			strcat(dd->urilist, "/mnt/");
-			char drive[] = " ";
-			drive[0] = tolower(filename[0]);
-			strcat(dd->urilist, drive);
 			char * ptr = (char *)filename;
-			ptr += 2;
-			replaceChar(ptr, '\\', '/');
-			strcat(dd->urilist, ptr);
-			strcat(dd->urilist, "\r\n");
+			if (_strnicmp(filename, "//wsl.localhost/", 16) == 0)
+			{
+				ptr += 16;
+				strcat(dd->urilist, ptr);
+				strcat(dd->urilist, "\r\n");
+			}
+			else if (strlen(filename) > 1 && filename[1] == ':') // SMB shares not supported, they first have to be mounted in the Linux system
+			{
+				strcat(dd->urilist, "/mnt/");
+				char drive[] = " ";
+				drive[0] = tolower(filename[0]);
+				strcat(dd->urilist, drive);
+				ptr += 2;
+				strcat(dd->urilist, ptr);
+				strcat(dd->urilist, "\r\n");
+			}			
 		}
 
 		DragFinish((HDROP)wparam);

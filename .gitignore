@@ -1,3 +1,5 @@
-# Distribution / packaging
 stuff/
 *.zip
+*.user
+.vs/
+x64/

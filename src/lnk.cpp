@@ -8,8 +8,8 @@ BOOL isLnkFileW(WCHAR *str)
 {
 	str = wcsrchr(str, L'.');
 	if (str != NULL)
-		return wcscmp(str, L".LNK") == 0 || wcscmp(str, L".lnk") == 0;
-//		return wcslen(str) == 4 && towlower(str[1]) == L'l';
+		//return wcscmp(str, L".LNK") == 0 || wcscmp(str, L".lnk") == 0;
+		return _wcsnicmp(str, L".LNK", 4) == 0;
 	return FALSE;
 }
 

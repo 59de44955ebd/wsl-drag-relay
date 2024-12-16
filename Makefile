@@ -1,8 +1,4 @@
-all: dll exe
-
-dll:
-	rm -f dist/wsl-drag-relay.dll
-	x86_64-w64-mingw32-gcc -shared -o dist/wsl-drag-relay.dll src/lnk.cpp src/dll.cpp -I/usr/include -ldwmapi -lole32 -luuid
+all: exe
 
 exe:
 	rm -f dist/wsl-drag-relay.exe
